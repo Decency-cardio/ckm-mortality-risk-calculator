@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
-import joblib
 import pandas as pd
 import streamlit as st
 
 
 APP_DIR = Path(__file__).resolve().parent
-MODEL_PATH = APP_DIR / "risk_tools" / "locked_hgb_death_model.joblib"
+MODEL_PATH = APP_DIR / "risk_tools" / "locked_hgb_death_model_portable.json"
 SCHEMA_PATH = APP_DIR / "risk_tools" / "risk_tool_feature_schema.json"
 
 SEX_OPTIONS = {
@@ -40,7 +40,7 @@ STATE_OPTIONS = {
 
 @st.cache_resource
 def load_model_and_schema():
-    model = joblib.load(MODEL_PATH)
+    model = json.loads(MODEL_PATH.read_text(encoding="utf-8"))
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     return model, schema
 
@@ -113,17 +113,87 @@ def build_manual_row() -> dict[str, float | int]:
     }
 
 
-def score_dataframe(df: pd.DataFrame, model, schema: dict) -> pd.DataFrame:
+def _is_missing(value) -> bool:
+    return bool(pd.isna(value))
+
+
+def _safe_float(value, fallback: float) -> float:
+    if _is_missing(value):
+        return fallback
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _transform_row(row: pd.Series, model: dict) -> list[float]:
+    numeric_values: list[float] = []
+    raw_numeric: list[float] = []
+
+    for feature, statistic in zip(model["numeric_features"], model["numeric_imputer_statistics"]):
+        raw_value = row.get(feature)
+        missing = _is_missing(raw_value)
+        raw_numeric.append(math.nan if missing else _safe_float(raw_value, float(statistic)))
+        numeric_values.append(float(statistic) if missing else _safe_float(raw_value, float(statistic)))
+
+    for feature_index in model["numeric_missing_indicator_features"]:
+        numeric_values.append(1.0 if math.isnan(raw_numeric[int(feature_index)]) else 0.0)
+
+    scaled_numeric = [
+        (value - float(mean)) / float(scale)
+        for value, mean, scale in zip(numeric_values, model["scaler_mean"], model["scaler_scale"])
+    ]
+
+    categorical_values: list[float] = []
+    for feature, statistic in zip(model["categorical_features"], model["categorical_imputer_statistics"]):
+        raw_value = row.get(feature)
+        categorical_values.append(float(statistic) if _is_missing(raw_value) else _safe_float(raw_value, float(statistic)))
+
+    onehot_values: list[float] = []
+    for value, categories in zip(categorical_values, model["onehot_categories"]):
+        onehot_values.extend(1.0 if value == float(category) else 0.0 for category in categories)
+
+    return scaled_numeric + onehot_values
+
+
+def _predict_one_probability(row: pd.Series, model: dict) -> float:
+    transformed = _transform_row(row, model)
+    raw_score = float(model["baseline_prediction"])
+
+    for tree in model["trees"]:
+        node_index = 0
+        while True:
+            node = tree[node_index]
+            if int(node["is_leaf"]) == 1:
+                raw_score += float(node["value"])
+                break
+
+            feature_value = transformed[int(node["feature_idx"])]
+            if math.isnan(feature_value):
+                node_index = int(node["left"] if int(node["missing_go_to_left"]) else node["right"])
+            elif feature_value <= float(node["num_threshold"]):
+                node_index = int(node["left"])
+            else:
+                node_index = int(node["right"])
+
+    return 1.0 / (1.0 + math.exp(-raw_score))
+
+
+def portable_predict_proba(df: pd.DataFrame, model: dict) -> list[float]:
+    return [_predict_one_probability(row, model) for _, row in df.iterrows()]
+
+
+def score_dataframe(df: pd.DataFrame, model: dict, schema: dict) -> pd.DataFrame:
     features = schema["numeric_features"] + schema["categorical_features"]
     missing = [feature for feature in features if feature not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {', '.join(missing)}")
     low_cutoff = float(schema["charls_fixed_risk_cutoffs"]["low_intermediate"])
     high_cutoff = float(schema["charls_fixed_risk_cutoffs"]["intermediate_high"])
-    probabilities = model.predict_proba(df[features])[:, 1]
+    probabilities = portable_predict_proba(df[features], model)
     out = df.copy()
     out["predicted_mortality_risk_before_next_followup"] = probabilities
-    out["predicted_mortality_risk_before_next_followup_pct"] = probabilities * 100
+    out["predicted_mortality_risk_before_next_followup_pct"] = [probability * 100 for probability in probabilities]
     out["risk_group"] = [risk_group(float(p), low_cutoff, high_cutoff) for p in probabilities]
     return out
 
