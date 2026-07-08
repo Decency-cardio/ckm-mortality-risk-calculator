@@ -1,0 +1,67 @@
+{
+  "outcome": "mortality risk before the next study follow-up",
+  "model": "locked histogram gradient boosting model trained in CHARLS",
+  "numeric_features": [
+    "age",
+    "bmi",
+    "waist_cm",
+    "depression_score",
+    "adl_count",
+    "mobility_count",
+    "from_wave",
+    "interval_waves"
+  ],
+  "categorical_features": [
+    "sex",
+    "education",
+    "marital",
+    "hypertension",
+    "diabetes",
+    "heart_disease",
+    "stroke",
+    "kidney_disease",
+    "current_smoking",
+    "ever_smoking",
+    "current_drinking",
+    "ever_drinking",
+    "ckm_metabolic",
+    "advanced_ckm",
+    "from_state"
+  ],
+  "charls_fixed_risk_cutoffs": {
+    "low_intermediate": 0.0161331429644003,
+    "intermediate_high": 0.0374728334642866,
+    "low_intermediate_pct": 1.6133142964400298,
+    "intermediate_high_pct": 3.74728334642866
+  },
+  "risk_group_rules": [
+    "Low risk: predicted risk < 1.61%",
+    "Intermediate risk: 1.61% <= predicted risk < 3.75%",
+    "High risk: predicted risk >= 3.75%"
+  ],
+  "state_coding": {
+    "1": "metabolic CKM without functional limitation",
+    "2": "clinical cardio-kidney CKM without functional limitation",
+    "3": "functional limitation"
+  },
+  "sex_coding": {
+    "0": "male",
+    "1": "female"
+  },
+  "education_coding": {
+    "1": "low: below high school / primary or junior-secondary equivalent",
+    "2": "middle: high school / technical secondary / vocational equivalent",
+    "3": "high: college, university, or above"
+  },
+  "marital_coding": {
+    "1": "married or living with spouse",
+    "2": "married, spouse absent",
+    "3": "partnered / cohabiting",
+    "4": "separated",
+    "5": "divorced",
+    "6": "separated or divorced",
+    "7": "widowed",
+    "8": "never married"
+  },
+  "important_caution": "The prediction horizon is the period from current assessment to the next study follow-up, not fixed 1-year or 2-year mortality."
+}
